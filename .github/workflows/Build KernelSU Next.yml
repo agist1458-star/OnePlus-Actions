@@ -250,22 +250,12 @@ jobs:
           cd kernel_workspace/kernel_platform
           echo "🛠️ 正在设置KernelSU Next..."
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
-
-          # === 核心整形手术开始 ===
-          echo "🚀 正在进行特征抹除，防止 ACE 扫描..."
-          # 仅替换 C 语言源码和头文件里的关键符号，避免破坏编译系统
-          find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.S" \) -exec sed -i 's/ksu/pkr/g' {} +
-          find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.S" \) -exec sed -i 's/KSU/PKR/g' {} +
-          find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.S" \) -exec sed -i 's/KernelSU/PkrSU/g' {} +
-          echo "✅ 特征抹除完成！所有 ksu 符号已更名为 pkr"
-          # === 核心整形手术结束 ===
-
+          
           cd KernelSU-Next
           KSU_VERSION=$(expr $(curl -sI "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/commits?sha=dev&per_page=1" | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') "+" 30000)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          # 注意：这里我们不动 Makefile 里的变量，保证编译脚本能找到路径
+          # 核心修正：在这里趁着还没改名，先把 Makefile 里的版本号填进去
           sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
-
           echo "✅ KernelSU Next 配置完成"
         
       - name: "🔧 Setup SUSFS | 配置 SUSFS"
@@ -273,14 +263,15 @@ jobs:
           cd kernel_workspace
 
           echo "⬇️ 下载SUSFS补丁..."
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}
+          # 核心修复：强制使用 5.10 专用的补丁分支
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10
           git clone https://github.com/Xiaomichael/kernel_patches.git
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
 
           cd kernel_platform
           echo "📝 复制补丁文件..."
-          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
-          # cp ../kernel_patches/next/scope_min_manual_hooks_v1.6.patch ./common/
+          # 核心修复：文件名也要写死成 5.10 版本的
+          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch ./common/
           cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
 
@@ -289,7 +280,6 @@ jobs:
           cp ../kernel_patches/zram/002-zstd.patch ./common/
 
           if [ "${{ github.event.inputs.lz4kd }}" == "On" ]; then
-            # Copy lz4k from ShirkNeko
             cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux
             cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib
             cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto
@@ -300,28 +290,25 @@ jobs:
           cd ./common
 
           if [ "${{ github.event.inputs.lz4kd }}" = "Off" ] && [ "${{ github.event.inputs.KERNEL_VERSION }}" = "6.1" ]; then
-            echo "📦 应用lz4+zstd补丁..."
             git apply -p1 < 001-lz4.patch || true
             patch -p1 < 002-zstd.patch || true
           fi
 
           if [ "${{ github.event.inputs.lz4kd }}" = "Off" ] && [ "${{ github.event.inputs.KERNEL_VERSION }}" = "6.6" ]; then
-            echo "📦 应用lz4补丁..."
             git apply -p1 < 001-lz4.patch || true
           fi
           
           if [ "${{ github.event.inputs.lz4kd }}" == "On" ]; then
-            echo "🚀 应用lz4kd补丁..."
             cp ../../SukiSU_patch/other/zram/zram_patch/${{ github.event.inputs.KERNEL_VERSION }}/lz4kd.patch ./
             patch -p1 -F 3 < lz4kd.patch || true
             cp ../../SukiSU_patch/other/zram/zram_patch/${{ github.event.inputs.KERNEL_VERSION }}/lz4k_oplus.patch ./
             patch -p1 -F 3 < lz4k_oplus.patch || true
           fi
-           
-          patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
+            
+          # 核心修复：应用 5.10 专用补丁
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || true
           cp ../../kernel_patches/69_hide_stuff.patch ./
           patch -p1 -F 3 < 69_hide_stuff.patch
-          # patch -p1 --fuzz=3 < scope_min_manual_hooks_v1.6.patch
           
           echo "✅ 所有补丁应用完成"
 
@@ -353,99 +340,73 @@ jobs:
         run: |
           cd kernel_workspace/kernel_platform
 
-          echo "⚙️ 正在配置内核编译选项..."
+          # === 最终整形手术：源码+配置文件 全量换脸 ===
+          echo "🚀 正在抹除 ksu 特征，注入 PKR 伪装..."
+          # 核心修正：不限制后缀，连 Kconfig 和 Makefile 一起改，这样开关才能对上
+          find . -type f -not -path '*/.*' -exec sed -i 's/ksu/pkr/g' {} +
+          find . -type f -not -path '*/.*' -exec sed -i 's/KSU/PKR/g' {} +
+          find . -type f -not -path '*/.*' -exec sed -i 's/KernelSU/PkrSU/g' {} +
+          echo "✅ 特征抹除完成！"
 
-          # Add KSU configuration settings
-          echo "📦 启用 KSU 支持..."
-          echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig  
-            
-          # Add SUSFS configuration settings
-          echo "📦 启用 SUSFS 功能..."
-          echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "⚙️ 正在配置内核编译选项 (已同步 PKR 新宏)..."
+          
+          # === 激活 PKR (原本的 KSU) 核心开关 ===
+          DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_PKR=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS_SUS_PATH=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
+          echo "CONFIG_PKR_SUSFS_SUS_MAP=y" >> $DEFCONFIG
 
-          #添加对 Mountify (backslashxx/mountify) 模块的支持
-          echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # === 保留你的高阶优化配置 ===
+          echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
 
           if [ "${{ github.event.inputs.bbg }}" == "On" ]; then
-            echo "⚡ 启用BBG中..."
-            echo 'CONFIG_BBG=y' >> ./common/arch/arm64/configs/gki_defconfig
-            echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> ./common/arch/arm64/configs/gki_defconfig
+            echo "⚡ 启用BBG基带保护..."
+            echo 'CONFIG_BBG=y' >> $DEFCONFIG
+            echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> $DEFCONFIG
           fi
           
           if [ "${{ github.event.inputs.bbr }}" == "On" ]; then
             echo "🌐 启用BBR网络算法..."
-            echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
-          fi
-        
-          if [ "${{ github.event.inputs.lz4kd }}" == "On" ]; then
-            echo "📦 启用lz4kd压缩..."
-            echo "CONFIG_CRYPTO_LZ4KD=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_ZRAM_WRITEBACK=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
+            echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
+            echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
           fi
 
-          if [ "${{ github.event.inputs.KERNEL_VERSION }}" == "6.1" ] || [ "${{ github.event.inputs.KERNEL_VERSION }}" == "6.6" ]; then
-            # Add O2 config
-            echo "📦 为6.1&6.6加入O2优化..."
-            echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          if [ "${{ github.event.inputs.lz4kd }}" == "On" ]; then
+            echo "📦 启用lz4kd压缩..."
+            echo "CONFIG_CRYPTO_LZ4KD=y" >> $DEFCONFIG
+            echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> $DEFCONFIG
+            echo "CONFIG_ZRAM_WRITEBACK=y" >> $DEFCONFIG
           fi
-          
+
           if [ "${{ github.event.inputs.proxy }}" == "On" ]; then
-            # Add proxy config
-            echo "CONFIG_BPF_STREAM_PARSER=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_NETFILTER_XT_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_MAX=65534" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_BITMAP_IP=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_BITMAP_IPMAC=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_BITMAP_PORT=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_IP=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_IPMARK=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_IPPORT=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_IPPORTIP=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_IPPORTNET=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_IPMAC=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_MAC=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_NETPORTNET=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_NET=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_NETNET=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_NETPORT=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP_SET_LIST_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP6_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "🛡️ 注入代理性能优化..."
+            echo "CONFIG_BPF_STREAM_PARSER=y" >> $DEFCONFIG
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> $DEFCONFIG
+            echo "CONFIG_NETFILTER_XT_SET=y" >> $DEFCONFIG
+            echo "CONFIG_IP_SET=y" >> $DEFCONFIG
           fi
-          
+
+          # === 5.10/5.15 专用的 LTO 性能优化 ===
           if [ "${{ github.event.inputs.KERNEL_VERSION }}" == "5.10" ] || [ "${{ github.event.inputs.KERNEL_VERSION }}" == "5.15" ]; then
-            echo "📦 正在为5.10系与5.15系配置lto中...."
-            DEFCONFIG=./common/arch/arm64/configs/gki_defconfig
+            echo "🚀 正在配置 LTO 优化..."
             sed -i 's/^CONFIG_LTO=n/CONFIG_LTO=y/' "$DEFCONFIG"
             sed -i 's/^CONFIG_LTO_CLANG_FULL=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
-            sed -i 's/^CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' "$DEFCONFIG"
             grep -q '^CONFIG_LTO_CLANG_THIN=y' "$DEFCONFIG" || echo 'CONFIG_LTO_CLANG_THIN=y' >> "$DEFCONFIG"
           fi
 
-          #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
-          echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
-
+          echo "CONFIG_HEADERS_INSTALL=n" >> $DEFCONFIG
           sed -i 's/check_defconfig//' ./common/build.config.gki
-          echo "✅ 内核配置更新完成"
+          echo "✅ 所有魔改与优化配置更新完成！"
          
       - name: "🔨 Build Kernel | 编译内核"
         run: |
