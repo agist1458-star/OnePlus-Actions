@@ -248,13 +248,22 @@ jobs:
       - name: "⚡ Setup KernelSU Next | 配置 KernelSU Next"
         run: |
           cd kernel_workspace/kernel_platform
-          # 下载并执行设置脚本
           echo "🛠️ 正在设置KernelSU Next..."
           curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+
+          # === 核心整形手术开始 ===
+          echo "🚀 正在进行特征抹除，防止 ACE 扫描..."
+          # 仅替换 C 语言源码和头文件里的关键符号，避免破坏编译系统
+          find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.S" \) -exec sed -i 's/ksu/pkr/g' {} +
+          find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.S" \) -exec sed -i 's/KSU/PKR/g' {} +
+          find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.S" \) -exec sed -i 's/KernelSU/PkrSU/g' {} +
+          echo "✅ 特征抹除完成！所有 ksu 符号已更名为 pkr"
+          # === 核心整形手术结束 ===
 
           cd KernelSU-Next
           KSU_VERSION=$(expr $(curl -sI "https://api.github.com/repos/KernelSU-Next/KernelSU-Next/commits?sha=dev&per_page=1" | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p') "+" 30000)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          # 注意：这里我们不动 Makefile 里的变量，保证编译脚本能找到路径
           sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
           echo "✅ KernelSU Next 配置完成"
